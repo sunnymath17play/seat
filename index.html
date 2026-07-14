@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="魔法數學座位表" />
+<title>✨ 魔法數學座位表</title>
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%235E8B6E'/%3E%3Ctext x='90' y='120' font-size='90' text-anchor='middle'%3E%E2%9C%A8%3C/text%3E%3C/svg%3E" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html, body { margin:0; padding:0; -webkit-text-size-adjust:100%; }
+  body { overscroll-behavior: none; }
+  * { -webkit-tap-highlight-color: transparent; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ---------------- 座位配置 ---------------- */
+const LAYOUT = [
+  { r:0, c:3, p:9 }, { r:0, c:6, p:5 }, { r:0, c:7, p:5 },
+  { r:1, c:1, p:4 }, { r:1, c:2, p:3 }, { r:1, c:3, p:2 },
+  { r:1, c:5, p:1 }, { r:1, c:6, p:1 }, { r:1, c:7, p:1 }, { r:1, c:8, p:1 },
+  { r:2, c:0, p:7 }, { r:2, c:1, p:6 }, { r:2, c:2, p:3 }, { r:2, c:3, p:2 },
+  { r:2, c:5, p:1 }, { r:2, c:6, p:1 }, { r:2, c:7, p:1 }, { r:2, c:8, p:1 },
+  { r:3, c:0, p:8 }, { r:3, c:1, p:6 }, { r:3, c:2, p:3 }, { r:3, c:3, p:3 },
+  { r:3, c:5, p:2 }, { r:3, c:6, p:2 }, { r:3, c:7, p:4 }, { r:3, c:8, p:4 },
+].map(s => ({ ...s, id: `${s.r}-${s.c}` }));
+
+const FRONT_ROWS = [0, 1];
+
+const CLASSES = [
+  { id:"g3",  label:"三年級" },
+  { id:"g4",  label:"四年級" },
+  { id:"g5a", label:"五年級A" },
+  { id:"g5b", label:"五年級B" },
+  { id:"g6",  label:"六年級" },
+];
+
+const GROUP_TINTS = [
+  { bg:"#DCEAF5", br:"#7FA9C9", dot:"#5B87A8" },
+  { bg:"#E3EFDF", br:"#8FB584", dot:"#6E9463" },
+  { bg:"#F3E9DA", br:"#C7AA81", dot:"#A98C63" },
+  { bg:"#E7E4F1", br:"#A49BC4", dot:"#847AA6" },
+];
+
+const blank = () => ({
+  namesText:"", shortText:"", seats:{}, pinned:[], groups:[], priorities:{},
+});
+
+const KEY = (c) => `magicSeat:${c}`;
+
+const parseNames = t => t.split(/[\n,，、\s]+/).map(s=>s.trim()).filter(Boolean);
+const shuffle = a => { const x=[...a]; for(let i=x.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[x[i],x[j]]=[x[j],x[i]];} return x; };
+
+function App() {
+  const [cls, setCls] = useState("g3");
+  const [data, setData] = useState(() => {
+    const o = {};
+    CLASSES.forEach(c => {
+      let v = blank();
+      try {
+        const raw = localStorage.getItem(KEY(c.id));
+        if (raw) v = { ...blank(), ...JSON.parse(raw) };
+      } catch(e) {}
+      o[c.id] = v;
+    });
+    return o;
+  });
+  const [sync, setSync] = useState("已儲存 ✓");
+  const [mode, setMode] = useState("normal");
+  const [swapPick, setSwapPick] = useState(null);
+  const [activeGroup, setActiveGroup] = useState(null);
+  const [drag, setDrag] = useState(null);
+  const [hover, setHover] = useState(null);
+  const [toast, setToast] = useState("");
+  const dragRef = useRef(null);
+  const first = useRef(true);
+
+  const d = data[cls];
+  const prioOf = id => d.priorities[id] ?? LAYOUT.find(s=>s.id===id).p;
+
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    setSync("儲存中…");
+    const t = setTimeout(() => {
+      try {
+        localStorage.setItem(KEY(cls), JSON.stringify(data[cls]));
+        setSync("已儲存 ✓");
+      } catch(e) { setSync("儲存失敗"); }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [data, cls]);
+
+  const update = useCallback(patch =>
+    setData(prev => ({ ...prev, [cls]: { ...prev[cls], ...patch } })), [cls]);
+
+  const flash = m => { setToast(m); setTimeout(()=>setToast(""), 2200); };
+
+  const seatSort = ids => [...ids].sort((a,b) => {
+    const pa = prioOf(a), pb = prioOf(b);
+    if (pa !== pb) return pa - pb;
+    const [ra,ca] = a.split("-").map(Number);
+    const [rb,cb] = b.split("-").map(Number);
+    return ra - rb || ca - cb;
+  });
+
+  const isFront = id => FRONT_ROWS.includes(Number(id.split("-")[0]));
+
+  const place = (students, seatIds, shortSet) => {
+    const out = {};
+    let pool = [...students];
+    const seats = seatSort(seatIds);
+    const frontSeats = seats.filter(isFront);
+    const shorts = pool.filter(n => shortSet.has(n));
+    const taken = new Set();
+    shorts.forEach((n,i) => { if (i < frontSeats.length) { out[frontSeats[i]] = n; taken.add(frontSeats[i]); } });
+    pool = pool.filter(n => !Object.values(out).includes(n));
+    const rest = seats.filter(s => !taken.has(s));
+    pool.forEach((n,i) => { if (i < rest.length) out[rest[i]] = n; });
+    return out;
+  };
+
+  const doFill = () => {
+    const names = parseNames(d.namesText);
+    const shortSet = new Set(parseNames(d.shortText));
+    const pinnedMap = {};
+    d.pinned.forEach(id => { if (d.seats[id]) pinnedMap[id] = d.seats[id]; });
+    const free = names.filter(n => !Object.values(pinnedMap).includes(n));
+    const freeSeats = LAYOUT.map(s=>s.id).filter(id => !d.pinned.includes(id));
+    update({ seats: { ...pinnedMap, ...place(free, freeSeats, shortSet) } });
+    flash(`已依序填入 ${names.length} 位學生`);
+  };
+
+  const doShuffle = () => {
+    const shortSet = new Set(parseNames(d.shortText));
+    const next = {};
+    d.pinned.forEach(id => { if (d.seats[id]) next[id] = d.seats[id]; });
+    const groupSeatIds = new Set();
+    d.groups.forEach(g => {
+      const gs = g.seats.filter(id => !d.pinned.includes(id));
+      gs.forEach(id => groupSeatIds.add(id));
+      const members = shuffle(gs.map(id => d.seats[id]).filter(Boolean));
+      seatSort(gs).forEach((id,i) => { if (members[i]) next[id] = members[i]; });
+    });
+    const used = new Set(Object.values(next));
+    const rest = shuffle(parseNames(d.namesText).filter(n => !used.has(n)));
+    const restSeats = LAYOUT.map(s=>s.id).filter(id => !d.pinned.includes(id) && !groupSeatIds.has(id));
+    Object.assign(next, place(rest, restSeats, shortSet));
+    update({ seats: next });
+    flash("已重新亂數排座");
+  };
+
+  const tapSeat = id => {
+    if (mode === "pin") {
+      update({ pinned: d.pinned.includes(id) ? d.pinned.filter(x=>x!==id) : [...d.pinned, id] });
+      return;
+    }
+    if (mode === "priority") {
+      const cur = prioOf(id);
+      update({ priorities: { ...d.priorities, [id]: cur >= 9 ? 1 : cur + 1 } });
+      return;
+    }
+    if (mode === "group") {
+      if (activeGroup == null) return flash("先新增或選擇一個輪換組");
+      const groups = d.groups.map(g => {
+        if (g.id !== activeGroup) return { ...g, seats: g.seats.filter(s=>s!==id) };
+        return { ...g, seats: g.seats.includes(id) ? g.seats.filter(s=>s!==id) : [...g.seats, id] };
+      });
+      update({ groups });
+      return;
+    }
+    if (mode === "swap") {
+      if (swapPick == null) return setSwapPick(id);
+      if (swapPick === id) return setSwapPick(null);
+      const s = { ...d.seats };
+      const a = s[swapPick], b = s[id];
+      if (a) s[id] = a; else delete s[id];
+      if (b) s[swapPick] = b; else delete s[swapPick];
+      update({ seats: s });
+      setSwapPick(null);
+    }
+  };
+
+  const onDown = (e, id) => {
+    if (mode !== "normal" || !d.seats[id]) return;
+    dragRef.current = { from:id, name:d.seats[id] };
+    setDrag({ from:id, name:d.seats[id], x:e.clientX, y:e.clientY });
+    e.currentTarget.setPointerCapture && e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onMove = e => {
+    if (!dragRef.current) return;
+    setDrag(p => ({ ...p, x:e.clientX, y:e.clientY }));
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const seat = el && el.closest("[data-seat]");
+    setHover(seat ? seat.getAttribute("data-seat") : null);
+  };
+  const onUp = () => {
+    const dr = dragRef.current;
+    if (dr && hover && hover !== dr.from) {
+      const s = { ...d.seats };
+      const b = s[hover];
+      s[hover] = dr.name;
+      if (b) s[dr.from] = b; else delete s[dr.from];
+      update({ seats: s });
+    }
+    dragRef.current = null;
+    setDrag(null);
+    setHover(null);
+  };
+
+  const seatStyle = id => {
+    const name = d.seats[id];
+    const g = d.groups.find(x => x.seats.includes(id));
+    const gi = g ? d.groups.indexOf(g) % GROUP_TINTS.length : -1;
+    if (!name) return { background:"rgba(255,255,255,0.35)", border:"2px dashed #CFCBBF", color:"#B6B1A4" };
+    if (swapPick === id) return { background:"#BFDCC4", border:"2px solid #5E8B6E", color:"#2F4A38" };
+    if (hover === id && drag) return { background:"#E8E2CF", border:"2px solid #C2B48C", color:"#4A4433" };
+    if (gi >= 0) return { background:GROUP_TINTS[gi].bg, border:`2px solid ${GROUP_TINTS[gi].br}`, color:"#3B4550" };
+    return { background:"#FFFDF8", border:"2px solid #E4DFD2", color:"#4A4638" };
+  };
+
+  const short = new Set(parseNames(d.shortText));
+  const seated = Object.values(d.seats).filter(Boolean).length;
+
+  const Btn = ({ m, children }) => (
+    <button onClick={() => { setMode(m); setSwapPick(null); }}
+      style={{ background: mode===m ? "#5E8B6E" : "#FFFDF8",
+               color: mode===m ? "#fff" : "#6B6555",
+               border: "1.5px solid " + (mode===m ? "#5E8B6E" : "#E4DFD2") }}
+      className="px-4 py-2 rounded-2xl text-sm font-medium transition-all active:scale-95">
+      {children}
+    </button>
+  );
+
+  return (
+    <div className="min-h-screen w-full p-4 select-none"
+      style={{ background:"linear-gradient(160deg,#F7F4EC 0%,#EFF1E8 45%,#E7EDEA 100%)",
+               fontFamily:"'PingFang TC','Noto Sans TC',system-ui,-apple-system,sans-serif",
+               touchAction: drag ? "none" : "auto" }}
+      onPointerMove={onMove} onPointerUp={onUp}>
+      <div className="max-w-5xl mx-auto">
+
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <div>
+            <h1 className="text-2xl font-bold tracking-wide" style={{ color:"#5E8B6E" }}>
+              ✨ 魔法數學座位表
+            </h1>
+            <p className="text-xs mt-1" style={{ color:"#9A9484" }}>
+              已排座位 {seated} / {LAYOUT.length}　·　{sync}
+            </p>
+          </div>
+          <div className="flex gap-1.5 flex-wrap">
+            {CLASSES.map(c => (
+              <button key={c.id}
+                onClick={() => { setCls(c.id); setSwapPick(null); setActiveGroup(null); }}
+                style={{ background: cls===c.id ? "#5E8B6E" : "#FFFDF8",
+                         color: cls===c.id ? "#fff" : "#6B6555",
+                         border: "1.5px solid " + (cls===c.id ? "#5E8B6E" : "#E4DFD2") }}
+                className="px-3.5 py-2 rounded-2xl text-sm font-medium active:scale-95 transition-all">
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-3xl p-5 mb-4"
+          style={{ background:"rgba(255,255,255,0.5)", border:"1.5px solid #E4DFD2" }}>
+          <div className="mx-auto mb-6 rounded-2xl py-3 text-center font-semibold text-sm"
+            style={{ maxWidth:340, background:"#4A4638", color:"#F7F4EC", letterSpacing:2 }}>
+            📺 電視 · 黑板
+          </div>
+          <div className="grid gap-2 mx-auto"
+            style={{ gridTemplateColumns:"repeat(4,1fr) 0.5fr repeat(4,1fr)", maxWidth:780 }}>
+            {Array.from({length:4}).flatMap((_, r) =>
+              Array.from({length:9}).map((_, c) => {
+                const seat = LAYOUT.find(s => s.r===r && s.c===c);
+                if (!seat) return <div key={`${r}-${c}`} style={{ aspectRatio:"1/1" }} />;
+                const id = seat.id;
+                const name = d.seats[id];
+                const pinned = d.pinned.includes(id);
+                const g = d.groups.find(x => x.seats.includes(id));
+                const gi = g ? d.groups.indexOf(g) % GROUP_TINTS.length : -1;
+                return (
+                  <div key={id} data-seat={id}
+                    onPointerDown={e => onDown(e, id)}
+                    onClick={() => tapSeat(id)}
+                    className="relative rounded-2xl flex items-center justify-center font-semibold cursor-pointer transition-all active:scale-95"
+                    style={{ ...seatStyle(id), aspectRatio:"1/1",
+                             fontSize:"clamp(11px,2.2vw,16px)",
+                             opacity: drag && drag.from===id ? 0.3 : 1,
+                             boxShadow: name ? "0 1px 3px rgba(90,80,60,0.06)" : "none" }}>
+                    <span className="px-1 text-center leading-tight">{name || ""}</span>
+                    {pinned && (
+                      <span className="absolute rounded-full"
+                        style={{ right:4, bottom:4,
+                                 width: mode==="pin" ? 8 : 3,
+                                 height: mode==="pin" ? 8 : 3,
+                                 background: mode==="pin" ? "#C48B5A"
+                                   : name ? "rgba(120,110,90,0.22)" : "rgba(150,145,130,0.25)" }} />
+                    )}
+                    {mode==="priority" && (
+                      <span className="absolute font-bold"
+                        style={{ left:5, top:3, fontSize:11, color:"#C4675A" }}>{prioOf(id)}</span>
+                    )}
+                    {mode==="group" && gi>=0 && (
+                      <span className="absolute rounded-full"
+                        style={{ left:5, top:5, width:8, height:8, background:GROUP_TINTS[gi].dot }} />
+                    )}
+                    {name && short.has(name) && (
+                      <span className="absolute" style={{ left:5, bottom:3, fontSize:9, color:"#B0A78E" }}>·</span>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-2 flex-wrap mb-3">
+          <Btn m="normal">✋ 一般（可拖曳）</Btn>
+          <Btn m="swap">↔️ 手動換座</Btn>
+          <Btn m="pin">🔒 指定座位</Btn>
+          <Btn m="group">🔁 輪換組</Btn>
+          <Btn m="priority">🔢 優先序</Btn>
+        </div>
+
+        <p className="text-xs mb-4 px-1" style={{ color:"#9A9484", minHeight:16 }}>
+          {mode==="normal" && "按住學生卡片拖到另一格即可互換。"}
+          {mode==="swap" && "點第一格（變綠色），再點第二格完成互換。"}
+          {mode==="pin" && "點座位釘選／取消。釘選後亂數排座不會動到。"}
+          {mode==="group" && "先選一個組，再點座位加入或移出該組。"}
+          {mode==="priority" && "點座位可循環調整優先序（1 最優先 → 9）。數字小的先入座。"}
+        </p>
+
+        {mode==="group" && (
+          <div className="rounded-3xl p-4 mb-4"
+            style={{ background:"rgba(255,255,255,0.6)", border:"1.5px solid #E4DFD2" }}>
+            <div className="flex gap-2 flex-wrap items-center">
+              {d.groups.map((g,i) => (
+                <div key={g.id} className="flex items-center">
+                  <button onClick={() => setActiveGroup(g.id)}
+                    className="px-3 py-2 rounded-l-2xl text-sm font-medium active:scale-95"
+                    style={{ background: activeGroup===g.id ? GROUP_TINTS[i%4].br : GROUP_TINTS[i%4].bg,
+                             color: activeGroup===g.id ? "#fff" : "#4A5560",
+                             border:`1.5px solid ${GROUP_TINTS[i%4].br}` }}>
+                    {g.name}（{g.seats.length}）
+                  </button>
+                  <button onClick={() => {
+                      update({ groups: d.groups.filter(x => x.id !== g.id) });
+                      if (activeGroup === g.id) setActiveGroup(null);
+                    }}
+                    className="px-2.5 py-2 rounded-r-2xl text-sm active:scale-95"
+                    style={{ background:"#FFFDF8", color:"#A89880",
+                             border:`1.5px solid ${GROUP_TINTS[i%4].br}`, borderLeft:"none" }}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <button onClick={() => {
+                  if (d.groups.length >= 4) return flash("最多 4 組");
+                  const id = "g" + Date.now();
+                  update({ groups: [...d.groups, { id, name:`第 ${d.groups.length+1} 組`, seats:[] }] });
+                  setActiveGroup(id);
+                }}
+                className="px-3.5 py-2 rounded-2xl text-sm font-medium active:scale-95"
+                style={{ background:"#FFFDF8", color:"#6B6555", border:"1.5px dashed #C9C3B2" }}>
+                ＋ 新增輪換組
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="rounded-3xl p-5 grid gap-4 md:grid-cols-2"
+          style={{ background:"rgba(255,255,255,0.6)", border:"1.5px solid #E4DFD2" }}>
+          <div>
+            <label className="block text-sm font-semibold mb-2" style={{ color:"#6B6555" }}>
+              學生名單（依序填入）
+            </label>
+            <textarea value={d.namesText}
+              onChange={e => update({ namesText: e.target.value })}
+              rows={7} placeholder={"每行一個，或用逗號分隔\n阿瑋, 陽陽, 翰翰…"}
+              className="w-full rounded-2xl p-3 text-sm outline-none"
+              style={{ background:"#FFFDF8", border:"1.5px solid #E4DFD2", color:"#4A4638", resize:"vertical" }} />
+            <p className="text-xs mt-1.5" style={{ color:"#A8A192" }}>
+              共 {parseNames(d.namesText).length} 人
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-semibold mb-2" style={{ color:"#6B6555" }}>
+              需坐前排的學生（矮小生）
+            </label>
+            <textarea value={d.shortText}
+              onChange={e => update({ shortText: e.target.value })}
+              rows={7} placeholder={"填入姓名，會優先安排到前兩列\n小曦, 朵朵…"}
+              className="w-full rounded-2xl p-3 text-sm outline-none"
+              style={{ background:"#FFFDF8", border:"1.5px solid #E4DFD2", color:"#4A4638", resize:"vertical" }} />
+            <p className="text-xs mt-1.5" style={{ color:"#A8A192" }}>共 {short.size} 人</p>
+          </div>
+
+          <div className="md:col-span-2 flex gap-2 flex-wrap">
+            <button onClick={doFill}
+              className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95 flex-1"
+              style={{ background:"#5E8B6E", color:"#fff", minWidth:140 }}>
+              📝 依序填入姓名
+            </button>
+            <button onClick={doShuffle}
+              className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95 flex-1"
+              style={{ background:"#C48B5A", color:"#fff", minWidth:140 }}>
+              🎲 亂數排座位
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {drag && (
+        <div className="fixed pointer-events-none rounded-2xl flex items-center justify-center font-semibold"
+          style={{ left: drag.x - 36, top: drag.y - 36, width:72, height:72,
+                   background:"#FFFDF8", border:"2px solid #5E8B6E", color:"#4A4638",
+                   boxShadow:"0 8px 24px rgba(90,80,60,0.2)", zIndex:50 }}>
+          {drag.name}
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed left-1/2 bottom-6 px-5 py-3 rounded-2xl text-sm font-medium"
+          style={{ transform:"translateX(-50%)", background:"#4A4638", color:"#F7F4EC", zIndex:60 }}>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

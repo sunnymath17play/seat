@@ -313,7 +313,7 @@ function App() {
     if (swapPick === id) return { background:"#BFDCC4", border:"2px solid #5E8B6E", color:"#2F4A38" };
     if (hover === id && drag) return { background:"#E8E2CF", border:"2px solid #C2B48C", color:"#4A4433" };
     if (issueSeats.has(id)) return { background:"#FBE4E1", border:"2px solid #D9534F", color:"#7A2E28" };
-    if (gi >= 0) return { background:GROUP_TINTS[gi].bg, border:`2px solid ${GROUP_TINTS[gi].br}`, color:"#3B4550" };
+    if (gi >= 0 && mode === "group") return { background:GROUP_TINTS[gi].bg, border:`2px solid ${GROUP_TINTS[gi].br}`, color:"#3B4550" };
     return { background:"#FFFDF8", border:"2px solid #E4DFD2", color:"#4A4638" };
   };
 

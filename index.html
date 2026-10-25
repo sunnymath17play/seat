@@ -13,6 +13,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
   html, body { margin:0; padding:0; -webkit-text-size-adjust:100%; }
   body { overscroll-behavior: none; }
@@ -62,8 +63,17 @@ const GROUP_TINTS = [
 
 const blank = () => ({
   namesText:"", shortText:"", seats:{}, pinned:[], groups:[], priorities:{},
-  girlsText:"", girlOnlyText:"", apartText:"",
+  girlsText:"", girlOnlyText:"", apartText:"", noteText:"",
 });
+
+const pad2 = n => String(n).padStart(2, "0");
+const todayStr = () => { const t = new Date(); return `${t.getFullYear()}-${pad2(t.getMonth()+1)}-${pad2(t.getDate())}`; };
+/* 2026-10-21 → 10/21(三) */
+const fmtDay = v => {
+  if (!v) return "";
+  const [y,m,dd] = v.split("-").map(Number);
+  return `${m}/${dd}(${"日一二三四五六"[new Date(y, m-1, dd).getDay()]})`;
+};
 
 const KEY = (c) => `magicSeat:${c}`;
 
@@ -150,6 +160,9 @@ function App() {
   const [toast, setToast] = useState("");
   const dragRef = useRef(null);
   const first = useRef(true);
+  const [day, setDay] = useState(todayStr);
+  const boardRef = useRef(null);
+  const [saving, setSaving] = useState(false);
 
   const d = data[cls];
   const prioOf = id => d.priorities[id] ?? LAYOUT.find(s=>s.id===id).p;
@@ -207,6 +220,32 @@ function App() {
   const issueNote = seats => {
     const n = findIssues(seats, parseRules(d)).length;
     return n ? `（有 ${n} 個條件排不開，紅框請手動調整）` : "";
+  };
+
+  const doSaveImage = async () => {
+    if (!window.html2canvas) return flash("存圖工具還沒載入，請稍後再試");
+    setSaving(true);
+    try {
+      const canvas = await window.html2canvas(boardRef.current, {
+        scale: 2, backgroundColor: "#FFFFFF", windowWidth: 1200,
+        ignoreElements: el => el.hasAttribute && el.hasAttribute("data-noexport"),
+        onclone: doc => { const st = doc.createElement("style"); st.textContent = "[data-export-fix] *{line-height:1.15 !important}"; doc.head.appendChild(st); const root = doc.querySelector("[data-export-root]"); root.setAttribute("data-export-fix",""); root.style.width = "1000px"; },
+      });
+      const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+      const label = CLASSES.find(c => c.id === cls).label;
+      const name = `座位表_${label}_${day}.png`;
+      const file = new File([blob], name, { type: "image/png" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+      } else {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+      }
+    } catch (e) {
+      if (e && e.name !== "AbortError") flash("存圖失敗，請再試一次");
+    }
+    setSaving(false);
   };
 
   const doFill = () => {
@@ -372,11 +411,25 @@ function App() {
           </div>
         </div>
 
-        <div className="rounded-3xl p-5 mb-4"
+        <div ref={boardRef} data-export-root className="rounded-3xl p-5 mb-4"
           style={{ background:"rgba(255,255,255,0.5)", border:"1.5px solid var(--line)" }}>
-          <div className="mx-auto mb-6 rounded-2xl py-3 text-center font-semibold text-sm"
-            style={{ maxWidth:340, background:"var(--tv)", color:"var(--tvText)", letterSpacing:2 }}>
-            📺 電視 · 黑板
+          <div className="flex flex-wrap items-start gap-3 mb-6">
+            <div style={{ flex:"1 1 0", minWidth:"max-content" }}>
+              <div className="font-bold leading-none" style={{ color:"var(--text)", fontSize:"clamp(18px,3.2vw,30px)" }}>
+                {fmtDay(day)}
+              </div>
+              {d.noteText && (
+                <div className="font-bold mt-1.5 whitespace-pre-line leading-snug"
+                  style={{ color:"var(--main)", fontSize:"clamp(14px,2.4vw,22px)" }}>
+                  {d.noteText}
+                </div>
+              )}
+            </div>
+            <div className="rounded-2xl flex items-center justify-center font-semibold text-sm"
+              style={{ height:44, flex:"0 1 340px", background:"var(--tv)", color:"var(--tvText)", letterSpacing:2 }}>
+              📺 電視 · 黑板
+            </div>
+            <div style={{ flex:"1 1 0" }} />
           </div>
           <div className="grid gap-2 mx-auto"
             style={{ gridTemplateColumns:"repeat(4,minmax(0,1fr)) minmax(0,0.5fr) repeat(4,minmax(0,1fr))", maxWidth:780 }}>
@@ -424,7 +477,7 @@ function App() {
             )}
           </div>
           {issues.length > 0 && (
-            <div className="mx-auto mt-4 rounded-2xl px-4 py-3 text-sm"
+            <div data-noexport className="mx-auto mt-4 rounded-2xl px-4 py-3 text-sm"
               style={{ maxWidth:780, background:"#FBE4E1", border:"1.5px solid #E8A9A2", color:"#7A2E28" }}>
               {issues.map((x,i) => <div key={i}>⚠️ {x.msg}</div>)}
             </div>
@@ -548,7 +601,29 @@ function App() {
             </div>
           </div>
 
+          <div className="md:col-span-2 grid gap-4" style={{ gridTemplateColumns:"auto minmax(0,1fr)" }}>
+            <div>
+              <label className="block text-sm font-semibold mb-2" style={{ color:"#6B6555" }}>📅 日期</label>
+              <input type="date" value={day} onChange={e => setDay(e.target.value || todayStr())}
+                className="rounded-2xl p-3 text-sm outline-none"
+                style={{ background:"#FFFFFF", border:"1.5px solid var(--line)", color:"var(--text)" }} />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold mb-2" style={{ color:"#6B6555" }}>📝 今日提醒（會寫在座位圖上）</label>
+              <textarea value={d.noteText}
+                onChange={e => update({ noteText: e.target.value })}
+                rows={2} placeholder={"例如：收期中(H)"}
+                className="w-full rounded-2xl p-3 text-sm outline-none"
+                style={{ background:"#FFFFFF", border:"1.5px solid var(--line)", color:"var(--text)", resize:"vertical" }} />
+            </div>
+          </div>
+
           <div className="md:col-span-2 flex gap-2 flex-wrap">
+            <button onClick={doSaveImage} disabled={saving}
+              className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95 flex-1"
+              style={{ background:"var(--text)", color:"#fff", minWidth:140, opacity: saving ? 0.6 : 1 }}>
+              {saving ? "存圖中…" : "📷 存成圖片"}
+            </button>
             <button onClick={doFill}
               className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95 flex-1"
               style={{ background:"var(--main)", color:"#fff", minWidth:140 }}>

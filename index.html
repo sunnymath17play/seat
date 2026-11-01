@@ -158,6 +158,7 @@ function App() {
   const [drag, setDrag] = useState(null);
   const [hover, setHover] = useState(null);
   const [toast, setToast] = useState("");
+  const [rosterDiff, setRosterDiff] = useState(null);
   const dragRef = useRef(null);
   const first = useRef(true);
   const [day, setDay] = useState(todayStr);
@@ -184,6 +185,42 @@ function App() {
     setData(prev => ({ ...prev, [cls]: { ...prev[cls], ...patch } })), [cls]);
 
   const flash = m => { setToast(m); setTimeout(()=>setToast(""), 2200); };
+
+  /* 同步名單：roster.json 由浩克依成績登記表產生（只放綽號）；先列出增減給 SUNNY 確認 */
+  const doCheckRoster = async () => {
+    try {
+      const r = await fetch("roster.json?t=" + Date.now(), { cache:"no-store" });
+      const j = await r.json();
+      const list = j[cls] || [];
+      const cur = parseNames(d.namesText);
+      const add = list.filter(n => !cur.includes(n));
+      const del = cur.filter(n => !list.includes(n));
+      if (!add.length && !del.length) return flash(`名單已是最新（${list.length} 人）✓`);
+      setRosterDiff({ add, del, total: list.length, updated: j.updated || "" });
+    } catch (e) { flash("讀不到最新名單，請確認有網路"); }
+  };
+
+  /* 離班的從名單、座位、各條件拿掉；新生補進空位（照座位優先順序），已排好的座位不動 */
+  const doApplyRoster = () => {
+    const { add, del } = rosterDiff;
+    const gone = new Set(del);
+    const strip = t => del.length ? parseNames(t || "").filter(n => !gone.has(n)).join("\n") : (t || "");
+    const seats = {};
+    Object.entries(d.seats).forEach(([id, n]) => { if (!gone.has(n)) seats[id] = n; });
+    const empty = seatSort(LAYOUT.map(s => s.id).filter(id => !seats[id] && !d.pinned.includes(id)));
+    add.forEach((n, i) => { if (i < empty.length) seats[empty[i]] = n; });
+    const apartText = del.length
+      ? (d.apartText || "").split("\n").map(l => parseNames(l).filter(n => !gone.has(n))).filter(g => g.length >= 2).map(g => g.join("、")).join("\n")
+      : d.apartText;
+    update({
+      namesText: [...parseNames(d.namesText).filter(n => !gone.has(n)), ...add].join("\n"),
+      shortText: strip(d.shortText), girlsText: strip(d.girlsText), girlOnlyText: strip(d.girlOnlyText),
+      apartText, seats,
+    });
+    setRosterDiff(null);
+    const over = add.length - empty.length;
+    flash(`名單已更新，共 ${rosterDiff.total} 人` + (over > 0 ? `（座位不夠，${over} 位沒排到）` : ""));
+  };
 
   const seatSort = ids => [...ids].sort((a,b) => {
     const pa = prioOf(a), pb = prioOf(b);
@@ -554,9 +591,16 @@ function App() {
         <div className="rounded-3xl p-5 grid gap-4 md:grid-cols-2"
           style={{ background:"rgba(255,255,255,0.6)", border:"1.5px solid var(--line)" }}>
           <div>
-            <label className="block text-sm font-semibold mb-2" style={{ color:"#6B6555" }}>
-              學生名單（依序填入）
-            </label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-semibold" style={{ color:"#6B6555" }}>
+                學生名單（依序填入）
+              </label>
+              <button onClick={doCheckRoster}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold active:scale-95"
+                style={{ background:"var(--main)", color:"#fff" }}>
+                🔄 同步名單
+              </button>
+            </div>
             <textarea value={d.namesText}
               onChange={e => update({ namesText: e.target.value })}
               rows={7} placeholder={"每行一個，或用逗號分隔\n阿瑋, 陽陽, 翰翰…"}
@@ -680,6 +724,41 @@ function App() {
                 className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95"
                 style={{ background:"#EEE9DD", color:"var(--text)" }}>
                 關閉
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {rosterDiff && (
+        <div className="fixed inset-0 flex items-center justify-center p-4"
+          style={{ background:"rgba(40,36,28,0.6)", zIndex:56 }}
+          onClick={() => setRosterDiff(null)}>
+          <div className="rounded-3xl p-5 flex flex-col gap-3 w-full"
+            style={{ background:"#FFFFFF", maxWidth:420, color:"var(--text)" }}
+            onClick={e => e.stopPropagation()}>
+            <div className="text-base font-bold">
+              {CLASSES.find(c => c.id === cls).label}名單有變動
+            </div>
+            {rosterDiff.del.length > 0 && (
+              <div className="text-sm"><b style={{ color:"#D9534F" }}>拿掉：</b>{rosterDiff.del.join("、")}</div>
+            )}
+            {rosterDiff.add.length > 0 && (
+              <div className="text-sm"><b style={{ color:"#22A06B" }}>加入：</b>{rosterDiff.add.join("、")}</div>
+            )}
+            <div className="text-xs" style={{ color:"#A8A192" }}>
+              更新後共 {rosterDiff.total} 人。已排好的座位不動，新加入的補進空位。{rosterDiff.updated && `（名單日期 ${rosterDiff.updated}）`}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={doApplyRoster}
+                className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95 flex-1"
+                style={{ background:"var(--main)", color:"#fff" }}>
+                確定更新
+              </button>
+              <button onClick={() => setRosterDiff(null)}
+                className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95"
+                style={{ background:"#EEE9DD", color:"var(--text)" }}>
+                先不要
               </button>
             </div>
           </div>

@@ -163,6 +163,7 @@ function App() {
   const [day, setDay] = useState(todayStr);
   const boardRef = useRef(null);
   const [saving, setSaving] = useState(false);
+  const [shot, setShot] = useState(null);
 
   const d = data[cls];
   const prioOf = id => d.priorities[id] ?? LAYOUT.find(s=>s.id===id).p;
@@ -222,30 +223,42 @@ function App() {
     return n ? `（有 ${n} 個條件排不開，紅框請手動調整）` : "";
   };
 
+  /* 第一步：先把座位圖畫成圖片，跳出預覽（iPad 要在第二次點擊時才能叫出分享選單） */
   const doSaveImage = async () => {
     if (!window.html2canvas) return flash("存圖工具還沒載入，請稍後再試");
     setSaving(true);
     try {
-      const canvas = await window.html2canvas(boardRef.current, {
-        scale: 2, backgroundColor: "#FFFFFF", windowWidth: 1200,
-        ignoreElements: el => el.hasAttribute && el.hasAttribute("data-noexport"),
-        onclone: doc => { const st = doc.createElement("style"); st.textContent = "[data-export-fix] *{line-height:1.15 !important}"; doc.head.appendChild(st); const root = doc.querySelector("[data-export-root]"); root.setAttribute("data-export-fix",""); root.style.width = "1000px"; },
-      });
+      const canvas = await Promise.race([
+        window.html2canvas(boardRef.current, {
+          scale: 2, backgroundColor: "#FFFFFF", windowWidth: 1200,
+          ignoreElements: el => el.hasAttribute && el.hasAttribute("data-noexport"),
+          onclone: doc => { const st = doc.createElement("style"); st.textContent = "[data-export-fix] *{line-height:1.15 !important}"; doc.head.appendChild(st); const root = doc.querySelector("[data-export-root]"); root.setAttribute("data-export-fix",""); root.style.width = "1000px"; },
+        }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 20000)),
+      ]);
       const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+      if (!blob) throw new Error("no blob");
       const label = CLASSES.find(c => c.id === cls).label;
       const name = `座位表_${label}_${day}.png`;
       const file = new File([blob], name, { type: "image/png" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file] });
-      } else {
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob); a.download = name;
-        document.body.appendChild(a); a.click(); a.remove();
-      }
+      setShot({ url: canvas.toDataURL("image/png"), file, name });
     } catch (e) {
-      if (e && e.name !== "AbortError") flash("存圖失敗，請再試一次");
+      flash("存圖失敗，請再試一次");
     }
     setSaving(false);
+  };
+
+  /* 第二步：在預覽視窗按「分享／儲存」，這時是新的點擊，iPad 才肯開分享選單 */
+  const doShareShot = async () => {
+    if (!shot) return;
+    if (navigator.canShare && navigator.canShare({ files: [shot.file] })) {
+      try { await navigator.share({ files: [shot.file] }); setShot(null); }
+      catch (e) { if (e && e.name !== "AbortError") flash("分享失敗，可以直接長按圖片儲存"); }
+    } else {
+      const a = document.createElement("a");
+      a.href = shot.url; a.download = shot.name;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
   };
 
   const doFill = () => {
@@ -644,6 +657,32 @@ function App() {
                    background:"#FFFFFF", border:"2px solid var(--main)", color:"var(--text)",
                    boxShadow:"0 8px 24px rgba(90,80,60,0.2)", zIndex:50 }}>
           {drag.name}
+        </div>
+      )}
+
+      {shot && (
+        <div className="fixed inset-0 flex flex-col items-center justify-center p-4"
+          style={{ background:"rgba(40,36,28,0.75)", zIndex:55 }}
+          onClick={() => setShot(null)}>
+          <div className="rounded-3xl p-4 flex flex-col items-center gap-3"
+            style={{ background:"#FFFFFF", maxWidth:"100%", maxHeight:"100%" }}
+            onClick={e => e.stopPropagation()}>
+            <img src={shot.url} alt="座位表圖片"
+              style={{ maxWidth:"100%", maxHeight:"65vh", objectFit:"contain", borderRadius:12, border:"1px solid var(--line)" }} />
+            <div className="text-xs" style={{ color:"#6B6555" }}>也可以直接長按圖片儲存</div>
+            <div className="flex gap-2 w-full">
+              <button onClick={doShareShot}
+                className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95 flex-1"
+                style={{ background:"var(--main)", color:"#fff" }}>
+                📤 分享／儲存
+              </button>
+              <button onClick={() => setShot(null)}
+                className="px-5 py-3 rounded-2xl text-sm font-semibold active:scale-95"
+                style={{ background:"#EEE9DD", color:"var(--text)" }}>
+                關閉
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

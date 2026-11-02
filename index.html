@@ -147,6 +147,7 @@ function App() {
         const raw = localStorage.getItem(KEY(c.id));
         if (raw) v = { ...blank(), ...JSON.parse(raw) };
       } catch(e) {}
+      if (v.noteDay !== todayStr()) v = { ...v, noteText:"", noteDay:"" };
       o[c.id] = v;
     });
     return o;
@@ -162,6 +163,30 @@ function App() {
   const dragRef = useRef(null);
   const first = useRef(true);
   const [day, setDay] = useState(todayStr);
+  const openDay = useRef(todayStr());
+
+  /* iPad 常把頁面放背景好幾天：回到畫面時若已經換日，日期回到今天、清掉昨天的今日提醒 */
+  useEffect(() => {
+    const check = () => {
+      const t = todayStr();
+      if (document.visibilityState !== "visible" || t === openDay.current) return;
+      openDay.current = t;
+      setDay(t);
+      setData(prev => {
+        const o = {};
+        Object.keys(prev).forEach(k => { o[k] = { ...prev[k], noteText:"", noteDay:"" }; });
+        return o;
+      });
+    };
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    window.addEventListener("pageshow", check);
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+      window.removeEventListener("pageshow", check);
+    };
+  }, []);
   const boardRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [shot, setShot] = useState(null);
@@ -668,7 +693,7 @@ function App() {
             <div>
               <label className="block text-sm font-semibold mb-2" style={{ color:"#6B6555" }}>📝 今日提醒（會寫在座位圖上）</label>
               <textarea value={d.noteText}
-                onChange={e => update({ noteText: e.target.value })}
+                onChange={e => update({ noteText: e.target.value, noteDay: todayStr() })}
                 rows={2} placeholder={"例如：收期中(H)"}
                 className="w-full rounded-2xl p-3 text-sm outline-none"
                 style={{ background:"#FFFFFF", border:"1.5px solid var(--line)", color:"var(--text)", resize:"vertical" }} />
